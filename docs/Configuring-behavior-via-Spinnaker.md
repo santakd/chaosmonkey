@@ -5,13 +5,15 @@ Click on the "Config" tab in Spinnaker. There should be a "Chaos Monkey"
 widget where you can enable/disable Chaos Monkey for the app, as well as
 configure its behavior.
 
-![Config screnshot](config.png)
+![Config screenshot](config.png)
 
 ## Termination frequency
 
 By default, Chaos Monkey is configured for a *mean time between terminations* of
 two (2) days, which means that on average Chaos Monkey will terminate an
 instance every two days for each group in that app.
+
+The lowest permitted value for mean time between terminations is one (1) day.
 
 Chaos Monkey also has a *minimum time between terminations*, which defaults to
 one (1) day. This means that Chaos Monkey is guaranteed to never kill more often
@@ -23,7 +25,7 @@ minimum time between terminations.
 
 Chaos Monkey operates on *groups* of instances. Every work day, for every
 (enabled) group of instances, Chaos Monkey will flip a biased coin to determine
-whether it should kill from an instance from a group. If so, it will randomly
+whether it should kill an instance from a group. If so, it will randomly
 select an instance from the group.
 
 Users can configure what Chaos Monkey considers a group.  The three options are:

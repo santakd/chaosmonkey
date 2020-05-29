@@ -66,6 +66,8 @@ func (m *Monkey) setDefaults() {
 	m.v.SetDefault(param.SpinnakerCertificate, "")
 	m.v.SetDefault(param.SpinnakerEncryptedPassword, "")
 	m.v.SetDefault(param.SpinnakerUser, "")
+	m.v.SetDefault(param.SpinnakerX509Cert, "")
+	m.v.SetDefault(param.SpinnakerX509Key, "")
 
 	m.v.SetDefault(param.DynamicProvider, "")
 	m.v.SetDefault(param.DynamicEndpoint, "")
@@ -358,7 +360,17 @@ func (m *Monkey) SpinnakerUser() string {
 	return m.v.GetString(param.SpinnakerUser)
 }
 
-// Decryptor returns an interface for decrypting sercrets
+// SpinnakerX509Cert retunrs a path to a X509 cert file
+func (m *Monkey) SpinnakerX509Cert() string {
+	return m.v.GetString(param.SpinnakerX509Cert)
+}
+
+// SpinnakerX509Key retunrs a path to a X509 key file
+func (m *Monkey) SpinnakerX509Key() string {
+	return m.v.GetString(param.SpinnakerX509Key)
+}
+
+// Decryptor returns an interface for decrypting secrets
 func (m *Monkey) Decryptor() string {
 	return m.v.GetString(param.Decryptor)
 }
@@ -402,7 +414,7 @@ func (m *Monkey) BindPFlag(parameter string, flag *pflag.Flag) (err error) {
 }
 
 // The code below is to provide a mechanism for adding a new remote config
-// provider without directly viper. Viper wasn't desinged for this use-case
+// provider without directly viper. Viper wasn't designed for this use-case
 // so this is a workaround.
 
 // RemoteProvider is a type alias

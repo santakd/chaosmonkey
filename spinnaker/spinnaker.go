@@ -86,12 +86,29 @@ func getClient(pfxData []byte, password string) (*http.Client, error) {
 	return &http.Client{Transport: transport}, nil
 }
 
+// getClientX509 takes X509 data (Public and Private keys) and the
+// and returns an http client that does TLS client auth
+func getClientX509(x509Cert, x509Key string) (*http.Client, error) {
+	cert, err := tls.LoadX509KeyPair(x509Cert, x509Key)
+	if err != nil {
+		return nil, errors.Wrap(err, "tls.X509KeyPair failed")
+	}
+	tlsConfig := &tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		InsecureSkipVerify: true,
+	}
+	transport := &http.Transport{TLSClientConfig: tlsConfig}
+	return &http.Client{Transport: transport}, nil
+}
+
 // NewFromConfig returns a Spinnaker based on config
 func NewFromConfig(cfg *config.Monkey) (Spinnaker, error) {
 	spinnakerEndpoint := cfg.SpinnakerEndpoint()
 	certPath := cfg.SpinnakerCertificate()
 	encryptedPassword := cfg.SpinnakerEncryptedPassword()
 	user := cfg.SpinnakerUser()
+	x509Cert := cfg.SpinnakerX509Cert()
+	x509Key := cfg.SpinnakerX509Key()
 
 	if spinnakerEndpoint == "" {
 		return Spinnaker{}, errors.New("FATAL: no spinnaker endpoint specified in config")
@@ -113,15 +130,20 @@ func NewFromConfig(cfg *config.Monkey) (Spinnaker, error) {
 		}
 	}
 
-	return New(spinnakerEndpoint, certPath, password, user)
+	return New(spinnakerEndpoint, certPath, password, x509Cert, x509Key, user)
 
 }
 
 // New returns a Spinnaker using a .p12 cert at certPath encrypted with
-// password. The user argument identifies the email address of the user which is
+// password or x509 cert. The user argument identifies the email address of the user which is
 // sent in the payload of the terminateInstances task API call
-func New(endpoint string, certPath string, password string, user string) (Spinnaker, error) {
+func New(endpoint string, certPath string, password string, x509Cert string, x509Key string, user string) (Spinnaker, error) {
 	var client *http.Client
+	var err error
+
+	if x509Cert != "" && certPath != "" {
+		return Spinnaker{}, errors.New("cannot use both p12 and x509 certs, choose one")
+	}
 
 	if certPath != "" {
 		pfxData, err := ioutil.ReadFile(certPath)
@@ -130,6 +152,11 @@ func New(endpoint string, certPath string, password string, user string) (Spinna
 		}
 
 		client, err = getClient(pfxData, password)
+		if err != nil {
+			return Spinnaker{}, err
+		}
+	} else if x509Cert != "" {
+		client, err = getClientX509(x509Cert, x509Key)
 		if err != nil {
 			return Spinnaker{}, err
 		}
@@ -452,12 +479,36 @@ func (s Spinnaker) asgs(appName, account, clusterName string) (result []spinnake
 	return asgs, nil
 }
 
-// CloudProvider returns the cloud provider for a given account
-func (s Spinnaker) CloudProvider(account string) (provider string, err error) {
-	url := s.accountURL(account)
-	resp, err := s.client.Get(url)
+// CloudProvider returns the cloud provider for a given account name
+func (s Spinnaker) CloudProvider(name string) (provider string, err error) {
+	account, err := s.account(name)
 	if err != nil {
-		return "", errors.Wrap(err, fmt.Sprintf("http get failed at %s", url))
+		return "", err
+	}
+
+	if account.CloudProvider == "" {
+		return "", errors.New("no cloudProvider field in response body")
+	}
+
+	return account.CloudProvider, nil
+}
+
+// account represents a spinnaker account
+type account struct {
+	CloudProvider string `json:"cloudProvider"`
+	Name          string `json:"name"`
+	Error         string `json:"error"`
+}
+
+// account returns an account by its name
+func (s Spinnaker) account(name string) (account, error) {
+	url := s.accountsURL(true)
+	resp, err := s.client.Get(url)
+	var ac account
+
+	// Usual HTTP checks
+	if err != nil {
+		return ac, errors.Wrapf(err, "http get failed at %s", url)
 	}
 
 	defer func() {
@@ -468,32 +519,33 @@ func (s Spinnaker) CloudProvider(account string) (provider string, err error) {
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return "", errors.Wrap(err, fmt.Sprintf("body read failed at %s", url))
+		return ac, errors.Wrapf(err, "body read failed at %s", url)
 	}
 
-	var fields struct {
-		CloudProvider string `json:"cloudProvider"`
-		Error         string `json:"error"`
-	}
-
-	err = json.Unmarshal(body, &fields)
+	var accounts []account
+	err = json.Unmarshal(body, &accounts)
 	if err != nil {
-		return "", errors.Wrap(err, "json unmarshal failed")
+		return ac, errors.Wrap(err, "json unmarshal failed")
 	}
+	statusKO := resp.StatusCode != http.StatusOK
 
-	if resp.StatusCode != http.StatusOK {
-		if fields.Error == "" {
-			return "", fmt.Errorf("unexpected status code: %d. body: %s", resp.StatusCode, body)
+	// Finally find account
+	for _, a := range accounts {
+		if a.Name != name {
+			continue
+		}
+		if statusKO {
+			if a.Error == "" {
+				return ac, errors.Errorf("unexpected status code: %d. body: %s", resp.StatusCode, body)
+			}
+
+			return ac, errors.Errorf("unexpected status code: %d. error: %s", resp.StatusCode, a.Error)
 		}
 
-		return "", fmt.Errorf("unexpected status code: %d. error: %s", resp.StatusCode, fields.Error)
+		return a, nil
 	}
 
-	if fields.CloudProvider == "" {
-		return "", fmt.Errorf("no cloudProvider field in response body")
-	}
-
-	return fields.CloudProvider, nil
+	return ac, errors.New("the account name doesn't exist")
 }
 
 // GetClusterNames returns a list of cluster names for an app
